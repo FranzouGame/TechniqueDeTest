@@ -52,55 +52,54 @@ Pour vérifier le contenu, on redécode la partie sommets avec la fonction de co
 | Un triangle avec l'indice 5 alors qu'il n'y a que 3 points | Points [(0.0, 0.0), (4.0, 0.0), (0.0, 3.0)] triangle [(0, 1, 5)] | `ValueError` | Vérifie que la fonction de conversion gère correctement un triangle avec un indice invalide |
 
 ## Tests d'api
-  Pour tout les tests d'api, on va donc crée un mock de l'api PointSetManager, qui va renvoyer les coordonnées des points, 
-  pour pouvoir tester l'api sans avoir besoin d'un serveur réel.
-  
-    GET /triangulation/{Id valide} alors que le pointSetId est valide, renvoie un code 200 et les données triangulés
-      Entrée : 
-        -Id valide
-      Attendu :
-        -Code 200
-        -Données triangulés
-      Pourquoi : 
-        -Vérifier que l'api renvoie bien les données triangulés pour un pointSetId valide
-    
-    Get /triangulation/{Id valide} alors que le pointSetId n'existe pas, renvoie un code 404 et un message d'erreur
-      Entrée : 
-        -Id valide mais inexistant
-      Attendu :
-        -Code 404
-        -Message d'erreur
-      Pourquoi : 
-        -Vérifier que l'api renvoie bien un message d'erreur pour un pointSetId invalide
 
-    Get /triangulation/{Id invalide} renvoie un code 400 et un message d'erreur
-      Entrée : 
-        -Id invalide
-      Attendu :
-        -Code 400
-        -Message d'erreur
-      Pourquoi : 
-        -Vérifier que l'api renvoie bien un message d'erreur pour un pointSetId invalide
+Ces tests appellent l'API du Triangulator avec le client de test de Flask, sans lancer de vrai serveur.
+Le PointSetManager n'est pas lancé non plus, il est remplacé par un mock, qui joue le rôle du vrai
+service et renvoie ce que celui-ci renverrait, c'est à dire un code HTTP et, en cas de succès, un
+PointSet au format binaire. Le mock permet aussi de simuler une panne réseau (aucune réponse).
 
-    Get /triangulation/{Id valide ou Invalide} alors que le serveur est indisponible, renvoie un code 500 et un message d'erreur
-      Entrée : 
-        -Id valide ou invalide
-      Attendu :
-        -Code 500
-        -Message d'erreur
-      Pourquoi : 
-        -Vérifier que l'api renvoie bien un message d'erreur pour un pointSetId valide ou invalide lorsque le serveur est indisponible
+Dans tous les cas d'erreur, on vérifie le code HTTP, mais aussi que le corps de la réponse est un JSON
+contenant les champs `code` et `message`, comme décrit dans le schéma Error de la spécification.
 
-    Get /triangulation/{Id valide ou Invalide} alors que le service est indisponible, renvoie un code 503 et un message d'erreur
-      Entrée : 
-        -Id valide ou invalide
-      Attendu :
-        -Code 503
-        -Message d'erreur
-      Pourquoi : 
-        -Vérifier que l'api renvoie bien un message d'erreur pour un pointSetId valide ou invalide lorsque le service est indisponible
+| Cas | Entrée (requête et réponse du mock) | Attendu | Pourquoi |
+|-----|--------|---------|----------|
+| Cas nominal | GET /triangulation/{UUID valide}, le mock répond 200 avec le PointSet du carré (4 points) | Code 200, en-tête `Content-Type: application/octet-stream`, corps de 64 bytes décodable en 4 sommets et 2 triangles | Vérifie le comportement bout en bout : appel au PointSetManager, décodage, triangulation, encodage |
+| Identifiant mal formé | GET /triangulation/pas-un-uuid | Code 400, JSON d'erreur, et le mock du PointSetManager n'est jamais appelé | L'identifiant doit être validé avant tout appel réseau, pour ne pas charger inutilement le PointSetManager |
+| PointSet inexistant | UUID valide, le mock répond 404 | Code 404, JSON d'erreur | Le Triangulator doit propager le 404 du PointSetManager et ne pas le transformer en 500 |
+| PointSetManager indisponible | UUID valide, le mock répond 503 | Code 503, JSON d'erreur | La panne vient d'une dépendance, pas du Triangulator : le client doit savoir qu'il peut réessayer plus tard |
+| PointSetManager injoignable | UUID valide, le mock lève une erreur de connexion (ou ne répond pas dans le délai imparti) | Code 503, JSON d'erreur, pas de trace d'exception renvoyée au client | Une coupure réseau ne doit pas faire planter le service ni exposer une erreur interne |
+| Réponse du PointSetManager corrompue | UUID valide, le mock répond 200 avec un binaire incohérent (header annonçant 5 points pour 3 points présents) | Code 500, JSON d'erreur | La `ValueError` du décodage doit être attrapée et traduite en réponse HTTP propre |
+| PointSet non triangulable | UUID valide, le mock répond 200 avec un PointSet de 2 points | Code 500, JSON d'erreur | La spécification prévoit le 500 quand la triangulation échoue, et la `ValueError` ne doit pas remonter telle quelle |
+| PointSet vide | UUID valide, le mock répond 200 avec un PointSet de 0 point | Code 500, JSON d'erreur | Même raison, et cohérent avec le choix fait dans les tests unitaires de triangulation |
+| Méthode non autorisée | POST /triangulation/{UUID valide} | Code 405 | Seul le GET est décrit dans la spécification |
 
+Cas restants à ajouter : réponse 500 du PointSetManager, identifiant vide dans l'URL, route inconnue.
 
 ## Tests de performance
+
+La triangulation et les conversions binaires sont les opérations les plus coûteuses du service, et leur
+coût dépend directement du nombre de points. Ces tests servent donc à deux choses : vérifier que les
+temps restent acceptables sur des volumes réalistes, et observer comment ils évoluent quand le volume
+augmente.
+
+Ils sont marqués avec `@pytest.mark.perf` et déclarés dans la configuration de pytest. On peut donc les
+exclure du reste des tests avec `pytest -m "not perf"` (cible `make unit_test`) ou les lancer seuls avec
+`pytest -m perf` (cible `make perf_test`).
+
+Les mesures sont faites avec `time.perf_counter`. Chaque mesure est répétée plusieurs fois et on retient
+la médiane, pour limiter l'effet des variations de la machine. Les seuils sont volontairement larges,
+car un test de performance qui échoue au hasard finit par être ignoré.
+
+| Cas | Entrée | Attendu | Pourquoi |
+|-----|--------|---------|----------|
+| Décodage binaire | PointSets de 1 000, 10 000 et 100 000 points | Temps mesuré pour chaque taille, moins d'une seconde pour 100 000 points | Le décodage est fait à chaque requête, il ne doit pas devenir le goulot d'étranglement |
+| Encodage des triangles | Triangulations de 1 000, 10 000 et 100 000 points | Temps mesuré pour chaque taille, moins d'une seconde pour 100 000 points | Même raison que le décodage, dans l'autre sens |
+| Aller-retour des conversions | PointSet de 10 000 points encodé puis décodé | Temps mesuré, et les points obtenus sont identiques aux points de départ | Vérifie que l'optimisation éventuelle des conversions ne casse pas leur justesse |
+| Triangulation | 100, 1 000 et 10 000 points aléatoires | Temps mesuré pour chaque taille, moins de dix secondes pour 10 000 points | C'est l'opération la plus coûteuse, et celle dont le coût risque le plus d'exploser |
+| Évolution du temps de triangulation | Points aléatoires, en doublant le nombre de points à chaque étape | Le temps ne doit pas être multiplié par plus de quatre quand le nombre de points double | Détecte un algorithme dont le coût augmente trop vite, ce qu'un seul seuil fixe ne verrait pas |
+| Requête complète | GET /triangulation avec un mock renvoyant 10 000 points | Temps de réponse mesuré, moins de dix secondes | Mesure ce que vit réellement le client, conversions et triangulation comprises |
+
+Cas restants à ajouter : consommation mémoire sur un gros PointSet, comportement sur des points très
+regroupés par rapport à des points bien répartis.
 
 ## Qualité
