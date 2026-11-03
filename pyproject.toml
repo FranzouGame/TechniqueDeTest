@@ -1,3 +1,6 @@
+[tool.ruff]
+extend-exclude = [".tmp"]
+
 [tool.ruff.lint]
 select = [
     "D",
@@ -8,3 +11,14 @@ select = [
     "SIM",
     "I",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"
+markers = ["perf: mesures de performance et de mémoire"]
+
+[tool.coverage.run]
+source = ["triangulator"]
+
+[tool.coverage.report]
+show_missing = true

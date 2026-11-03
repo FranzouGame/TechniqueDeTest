@@ -1,5 +1,16 @@
 # TODO
 
+## Hypothèse sur le format binaire
+
+La spécification dit combien de bytes fait chaque donnée, mais pas dans quel ordre ces bytes sont
+écrits. Il y a deux ordres possibles, et un nombre écrit dans un ordre et relu dans l'autre ne donne
+pas la même valeur. Comme le problème ne change pas la taille des données, il serait difficile à
+repérer.
+
+J'ai donc choisi le petit-boutiste (little-endian) pour tous mes tests, c'est à dire l'option par
+défaut sur la plupart des machines. Si le vrai PointSetManager utilise l'autre ordre, il faudra le
+changer, mais au moins le choix est écrit quelque part.
+
 ## Tests unitaires
 ### Test de la fonction conversion des données binaires:
 
@@ -73,7 +84,7 @@ contenant les champs `code` et `message`, comme décrit dans le schéma Error de
 | PointSet vide | UUID valide, le mock répond 200 avec un PointSet de 0 point | Code 500, JSON d'erreur | Même raison, et cohérent avec le choix fait dans les tests unitaires de triangulation |
 | Méthode non autorisée | POST /triangulation/{UUID valide} | Code 405 | Seul le GET est décrit dans la spécification |
 
-Cas restants à ajouter : réponse 500 du PointSetManager, identifiant vide dans l'URL, route inconnue.
+Cas ajoutés : réponse 500 du PointSetManager, identifiant vide dans l'URL et route inconnue.
 
 ## Tests de performance
 
@@ -99,7 +110,51 @@ car un test de performance qui échoue au hasard finit par être ignoré.
 | Évolution du temps de triangulation | Points aléatoires, en doublant le nombre de points à chaque étape | Le temps ne doit pas être multiplié par plus de quatre quand le nombre de points double | Détecte un algorithme dont le coût augmente trop vite, ce qu'un seul seuil fixe ne verrait pas |
 | Requête complète | GET /triangulation avec un mock renvoyant 10 000 points | Temps de réponse mesuré, moins de dix secondes | Mesure ce que vit réellement le client, conversions et triangulation comprises |
 
-Cas restants à ajouter : consommation mémoire sur un gros PointSet, comportement sur des points très
-regroupés par rapport à des points bien répartis.
+Cas ajoutés : consommation mémoire sur un gros PointSet et comparaison des points très regroupés
+avec des points bien répartis.
 
 ## Qualité
+
+### Couverture
+
+La couverture est mesurée avec `coverage`, configuré dans `pyproject.toml` pour ne regarder que le
+package `triangulator` et pour afficher les lignes non couvertes. L'objectif est que tout le code du
+composant soit couvert, et surtout qu'une ligne non couverte soit une question à se poser : soit il
+manque un test, soit le code ne sert à rien.
+
+La couverture seule ne suffit pas à prouver que les tests sont bons. Au moment du rendu intermédiaire,
+elle est déjà à 100 % alors qu'aucune fonction n'est implémentée : les fonctions lèvent
+`NotImplementedError`, cette ligne est exécutée, donc elle est comptée comme couverte. Cela montre bien
+qu'un chiffre élevé ne dit rien de la pertinence des tests.
+
+Pour éviter de me rassurer à tort, les tests vérifient des valeurs précises plutôt que l'absence
+d'erreur, et le fichier `conftest.py` relit le binaire avec son propre code plutôt qu'avec les
+fonctions testées. Sans cela, une même erreur à l'encodage et au décodage s'annulerait et le test
+passerait quand même.
+
+### Qualité du code
+
+`ruff check` doit passer sans aucune remarque, avec les règles fournies dans `pyproject.toml`. Aucune
+règle n'a été retirée. La règle `D` impose d'écrire une docstring pour chaque module, classe et
+fonction, y compris dans les tests.
+
+### Documentation
+
+La documentation HTML est générée avec `pdoc3` à partir des docstrings, dans le dossier `docs/`. Lint
+et documentation sont donc liés : si `ruff` ne signale rien, c'est que tout est documenté et que la
+documentation générée est complète. Le dossier `docs/` est ignoré par git, car il est régénérable et
+n'a pas à être versionné.
+
+### Commandes
+
+| Cible | Ce qu'elle lance |
+|-------|------------------|
+| `make test` | tous les tests, performance comprise |
+| `make unit_test` | tous les tests sauf la performance (`-m "not perf"`) |
+| `make perf_test` | uniquement les tests de performance (`-m perf`) |
+| `make coverage` | les tests hors performance, puis le rapport de couverture |
+| `make lint` | `ruff check` sur tout le projet |
+| `make doc` | la documentation HTML dans `docs/` |
+
+Le marqueur `perf` est déclaré dans `pyproject.toml`, ce qui permet de séparer les tests de
+performance du reste sans avoir à les ranger dans un dossier à part.
